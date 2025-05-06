@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebXR AR Hand-Tracked Cards</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <style>
+    body { 
+      margin: 0; 
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #BCAAA4;
+    }
+    #overlay {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      right: 20px;
+      z-index: 1;
+      text-align: center;
+    }
+    #start-button {
+      padding: 12px 24px;
+      font-size: 18px;
+      background: rgba(93, 64, 55, 0.9);
+      color: white;
+      border: none;
+      border-radius: 30px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin: 0 auto;
+      display: inline-block;
+    }
+    #start-button:hover {
+      background: rgba(93, 64, 55, 1);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    }
+    #title {
+      font-family: "Arial", sans-serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: #5D4037;
+      margin-bottom: 15px;
+      text-shadow: 0 2px 4px rgba(255,255,255,0.5);
+    }
+    #status {
+      margin: 15px auto 0;
+      font-size: 16px;
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 10px 15px;
+      border-radius: 12px;
+      display: none;
+      width: fit-content;
+      backdrop-filter: blur(5px);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      max-width: 80%;
+    }
+    #hand-position {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 14px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <div id="title">Hover your hand over the cards</div>
+    <button id="start-button">Start AR Experience</button>
+    <div id="status"></div>
+  </div>
+  <div id="hand-position"></div>
+  
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+    import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
+    import { FontLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/FontLoader.js';
+    import { TextGeometry } from 'https://unpkg.com/three@0.150.1/examples/jsm/geometries/TextGeometry.js';
+
+    let camera, scene, renderer;
+    let controller, handModel;
+    let clock = new THREE.Clock();
+    let cards = [];
+    let handSphere; // Visual indicator for hand position
+    let handJoints = {};
+
+    // Card data
+    const cardData = [
+      { 
+        title: "Mountains", 
+        content: "Majestic peaks reaching for the sky.",
+        color: 0x8D6E63
+      },
+      { 
+        title: "Beaches", 
+        content: "Golden sands and endless waves.",
+        color: 0x90CAF9 
+      },
+      { 
+        title: "Forests", 
+        content: "Ancient trees in deep green silence.",
+        color: 0x66BB6A
+      },
+      { 
+        title: "Cities", 
+        content: "Vibrant urban landscapes that never sleep.",
+        color: 0xFFB74D
+      }
+    ];
+    
+    // Card animation parameters
+    const hoverEasing = createCubicBezier(0.23, 1, 0.32, 1);
+    const returnEasing = createCubicBezier(0.445, 0.05, 0.55, 0.95);
+    
+    // Animation tracking
+    let lastTime = 0;
+    let handPosition = new THREE.Vector3();
+    
+    init();
+
+    function init() {
+      // Scene setup
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+      // Renderer setup
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      renderer.setClearColor(0x000000, 0);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
+      directionalLight.position.set(1, 2, 1);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 1024;
+      directionalLight.shadow.mapSize.height = 1024;
+      scene.add(directionalLight);
+
+      // Start button event
+      document.getElementById('start-button').addEventListener('click', () => {
+        if (navigator.xr) {
+          navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+            if (supported) {
+              const sessionInit = { 
+                requiredFeatures: ['hand-tracking'],
+                optionalFeatures: ['dom-overlay'], 
+                domOverlay: { root: document.body } 
+              };
+              navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
+            } else {
+              updateStatus('WebXR AR with hand tracking is not supported on this device.');
+            }
+          });
+        } else {
+          updateStatus('WebXR is not supported in this browser.');
+        }
+      });
+
+      // Handle window resize
+      window.addEventListener('resize', onWindowResize);
+    }
+
+    function updateStatus(message) {
+      const statusElement = document.getElementById('status');
+      statusElement.style.display = 'block';
+      statusElement.textContent = message;
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onSessionStarted(session) {
+      // Set up XR session
+      renderer.xr.setReferenceSpaceType('local');
+      renderer.xr.setSession(session);
+      
+      // Hide button and show status
+      document.getElementById('start-button').style.display = 'none';
+      document.getElementById('title').style.display = 'none';
+      updateStatus('Looking for your hands... Please show your hands in view.');
+      document.getElementById('hand-position').style.display = 'block';
+
+      // Create the card menu
+      createCards();
+      
+      // Set up hand tracking
+      setupHandTracking(session);
+
+      // Start animation loop
+      renderer.setAnimationLoop(render);
+
+      // Handle session end
+      session.addEventListener('end', onSessionEnd);
+    }
+
+    function onSessionEnd() {
+      updateStatus('AR session ended');
+      document.getElementById('start-button').style.display = 'block';
+      document.getElementById('title').style.display = 'block';
+      document.getElementById('hand-position').style.display = 'none';
+    }
+
+    function createCards() {
+      const cardWidth = 0.2;
+      const cardHeight = 0.3;
+      const cardSpacing = 0.05;
+      const totalWidth = cardData.length * (cardWidth + cardSpacing) - cardSpacing;
+      let startX = -totalWidth / 2 + cardWidth / 2;
+
+      cardData.forEach((data, index) => {
+        // Create card container
+        const cardGroup = new THREE.Group();
+        
+        // Create card body
+        const cardGeometry = new THREE.BoxGeometry(cardWidth, cardHeight, 0.01);
+        const cardMaterial = new THREE.MeshStandardMaterial({
+          color: data.color,
+          roughness: 0.3,
+          metalness: 0.7,
+          transparent: true,
+          opacity: 0.9
+        });
+        
+        const cardMesh = new THREE.Mesh(cardGeometry, cardMaterial);
+        cardMesh.castShadow = true;
+        cardMesh.receiveShadow = true;
+        cardGroup.add(cardMesh);
+        
+        // Create card border
+        const borderGeometry = new THREE.BoxGeometry(cardWidth + 0.01, cardHeight + 0.01, 0.005);
+        const borderMaterial = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: 0.5,
+          metalness: 0.8,
+        });
+        const borderMesh = new THREE.Mesh(borderGeometry, borderMaterial);
+        borderMesh.position.z = -0.008;
+        cardGroup.add(borderMesh);
+        
+        // Add title
+        const titleMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+        const titleGeometry = new THREE.PlaneGeometry(cardWidth - 0.02, 0.05);
+        const titleMesh = new THREE.Mesh(titleGeometry, titleMaterial);
+        titleMesh.position.set(0, cardHeight/2 - 0.05, 0.006);
+        
+        // Add title text
+        const titleCanvas = document.createElement('canvas');
+        titleCanvas.width = 256;
+        titleCanvas.height = 64;
+        const titleContext = titleCanvas.getContext('2d');
+        titleContext.fillStyle = '#000000';
+        titleContext.fillRect(0, 0, 256, 64);
+        titleContext.font = 'bold 36px Arial';
+        titleContext.textAlign = 'center';
+        titleContext.textBaseline = 'middle';
+        titleContext.fillStyle = '#ffffff';
+        titleContext.fillText(data.title, 128, 32);
+        
+        const titleTexture = new THREE.CanvasTexture(titleCanvas);
+        const titleTextMaterial = new THREE.MeshBasicMaterial({ 
+          map: titleTexture, 
+          transparent: true 
+        });
+        const titleTextMesh = new THREE.Mesh(titleGeometry, titleTextMaterial);
+        titleTextMesh.position.set(0, cardHeight/2 - 0.05, 0.007);
+        cardGroup.add(titleTextMesh);
+        
+        // Add content
+        const contentCanvas = document.createElement('canvas');
+        contentCanvas.width = 256;
+        contentCanvas.height = 128;
+        const contentContext = contentCanvas.getContext('2d');
+        contentContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        contentContext.fillRect(0, 0, 256, 128);
+        contentContext.font = '20px Arial';
+        contentContext.textAlign = 'center';
+        contentContext.textBaseline = 'middle';
+        contentContext.fillStyle = '#ffffff';
+        
+        // Handle text wrapping
+        const words = data.content.split(' ');
+        let line = '';
+        let y = 40;
+        const lineHeight = 24;
+        const maxWidth = 230;
+        
+        words.forEach(word => {
+          const testLine = line + word + ' ';
+          const metrics = contentContext.measureText(testLine);
+          const testWidth = metrics.width;
+          
+          if (testWidth > maxWidth) {
+            contentContext.fillText(line, 128, y);
+            line = word + ' ';
+            y += lineHeight;
+          } else {
+            line = testLine;
+          }
+        });
+        contentContext.fillText(line, 128, y);
+        
+        const contentTexture = new THREE.CanvasTexture(contentCanvas);
+        const contentMaterial = new THREE.MeshBasicMaterial({ 
+          map: contentTexture, 
+          transparent: true,
+          opacity: 0.9
+        });
+        const contentGeometry = new THREE.PlaneGeometry(cardWidth - 0.02, cardWidth/2);
+        const contentMesh = new THREE.Mesh(contentGeometry, contentMaterial);
+        contentMesh.position.set(0, -cardHeight/2 + cardWidth/4, 0.007);
+        cardGroup.add(contentMesh);
+        
+        // Position card
+        cardGroup.position.set(startX + index * (cardWidth + cardSpacing), 0, -0.5);
+        cardGroup.initialPosition = cardGroup.position.clone();
+        cardGroup.initialRotation = cardGroup.rotation.clone();
+        
+        // Add to scene and cards array
+        scene.add(cardGroup);
+        cards.push({
+          mesh: cardGroup,
+          width: cardWidth,
+          height: cardHeight,
+          isHovered: false,
+          hoverTime: 0,
+          returnTime: 0,
+          data: data
+        });
+      });
+      
+      updateStatus('Cards created! Move your hand near them to interact.');
+    }
+
+    function setupHandTracking(session) {
+      // Create a visual indicator for the hand position
+      const sphereGeometry = new THREE.SphereGeometry(0.02, 16, 16);
+      const sphereMaterial = new THREE.MeshStandardMaterial({
+        color: 0xff0000,
+        transparent: true,
+        opacity: 0.7,
+        emissive: 0xff0000,
+        emissiveIntensity: 0.5
+      });
+      handSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+      scene.add(handSphere);
+      
+      // Setup for hand tracking
+      session.addEventListener('inputsourceschange', (event) => {
+        const inputSources = event.session.inputSources;
+        
+        for (let inputSource of inputSources) {
+          if (inputSource.hand) {
+            updateStatus('Hand detected! Move your hand to interact with cards.');
+          }
+        }
+      });
+    }
+
+    function checkCardInteractions(hand) {
+      if (!hand) return;
+      
+      // Track index finger tip position
+      const indexFingerTip = hand.joints['index-finger-tip'];
+      if (indexFingerTip) {
+        handSphere.position.copy(indexFingerTip.position);
+        handSphere.visible = true;
+        handPosition.copy(indexFingerTip.position);
+        
+        document.getElementById('hand-position').textContent = 
+          `Hand: x:${handPosition.x.toFixed(2)} y:${handPosition.y.toFixed(2)} z:${handPosition.z.toFixed(2)}`;
+        
+        // Check for hover interactions with cards
+        cards.forEach((card, i) => {
+          const cardPos = card.mesh.position;
+          const dx = Math.abs(handPosition.x - cardPos.x);
+          const dy = Math.abs(handPosition.y - cardPos.y);
+          const dz = Math.abs(handPosition.z - cardPos.z);
+          
+          // Check if hand is close to card
+          if (dx < card.width/1.5 && dy < card.height/1.5 && dz < 0.2) {
+            if (!card.isHovered) {
+              card.isHovered = true;
+              card.hoverTime = 0;
+              card.returnTime = 0;
+              
+              // Visual feedback
+              card.mesh.children[0].material.emissive = new THREE.Color(0xffffff);
+              card.mesh.children[0].material.emissiveIntensity = 0.3;
+            }
+            
+            // Calculate normalized position within card bounds
+            const normX = (handPosition.x - cardPos.x) / (card.width/2);
+            const normY = (handPosition.y - cardPos.y) / (card.height/2);
+            
+            // Update card tilt based on hand position
+            updateCardTilt(card, normX, normY);
+          } else if (card.isHovered) {
+            card.isHovered = false;
+            card.returnTime = 0;
+            
+            // Reset visual feedback
+            card.mesh.children[0].material.emissive = new THREE.Color(0x000000);
+            card.mesh.children[0].material.emissiveIntensity = 0;
+          }
+        });
+      } else {
+        handSphere.visible = false;
+      }
+    }
+
+    function updateCardTilt(card, normX, normY) {
+      // Calculate rotation based on normalized position
+      const rotX = normY * -30 * Math.PI / 180; // Convert to radians
+      const rotY = normX * 30 * Math.PI / 180;
+      
+      // Apply rotation with easing
+      card.mesh.rotation.x = rotX;
+      card.mesh.rotation.y = rotY;
+      
+      // Apply subtle translation
+      const transX = normX * -0.02;
+      const transY = normY * -0.02;
+      card.mesh.position.x = card.mesh.initialPosition.x + transX;
+      card.mesh.position.y = card.mesh.initialPosition.y + transY;
+      
+      // Add subtle scale increase for hover effect
+      card.mesh.scale.set(1.05, 1.05, 1.05);
+    }
+
+    function updateCardsAnimation(deltaTime) {
+      cards.forEach(card => {
+        if (!card.isHovered) {
+          card.returnTime += deltaTime;
+          
+          // Ease back to original position and rotation
+          const progress = Math.min(card.returnTime / 0.6, 1.0);
+          const ease = returnEasing(progress);
+          
+          card.mesh.rotation.x = card.initialRotation.x * ease;
+          card.mesh.rotation.y = card.initialRotation.y * ease;
+          card.mesh.position.x = card.mesh.initialPosition.x;
+          card.mesh.position.y = card.mesh.initialPosition.y;
+          card.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), ease);
+        } else {
+          card.hoverTime += deltaTime;
+        }
+      });
+    }
+
+    // Utility function to simulate cubic-bezier easing
+    function createCubicBezier(x1, y1, x2, y2) {
+      return function(t) {
+        if (t <= 0) return 0;
+        if (t >= 1) return 1;
+        
+        // Simple approximation of cubic bezier
+        const p0 = 0;
+        const p1 = x1;
+        const p2 = x2;
+        const p3 = 1;
+        
+        const t2 = t * t;
+        const t3 = t2 * t;
+        
+        return p0 * (1 - 3 * t + 3 * t2 - t3) +
+               3 * p1 * (t - 2 * t2 + t3) +
+               3 * p2 * (-t2 + t3) +
+               p3 * t3;
+      };
+    }
+
+    function render(timestamp, frame) {
+      const deltaTime = (timestamp - lastTime) / 1000;
+      lastTime = timestamp;
+      
+      if (frame) {
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
+        
+        // Update hand tracking
+        if (session) {
+          for (const inputSource of session.inputSources) {
+            if (inputSource.hand) {
+              const hand = {};
+              
+              // Get all the joints for the hand
+              for (const jointName of inputSource.hand.values()) {
+                const joint = inputSource.hand.get(jointName);
+                const jointPose = frame.getJointPose(joint, referenceSpace);
+                
+                if (jointPose) {
+                  hand.joints = hand.joints || {};
+                  hand.joints[jointName] = {
+                    position: new THREE.Vector3(
+                      jointPose.transform.position.x,
+                      jointPose.transform.position.y,
+                      jointPose.transform.position.z
+                    ),
+                    orientation: new THREE.Quaternion(
+                      jointPose.transform.orientation.x,
+                      jointPose.transform.orientation.y,
+                      jointPose.transform.orientation.z,
+                      jointPose.transform.orientation.w
+                    )
+                  };
+                }
+              }
+              
+              // Check interactions with cards
+              checkCardInteractions(hand);
+              break; // Only process the first hand
+            }
+          }
+        }
+        
+        // Update card animations
+        updateCardsAnimation(deltaTime);
+      }
+      
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
