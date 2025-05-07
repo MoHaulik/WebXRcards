@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>WebXR AR Hand-Tracked Cards</title>
+  <title>WebXR AR Interactive Cards</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,121 +11,101 @@
       margin: 0; 
       overflow: hidden;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background-color: #BCAAA4;
     }
     #overlay {
       position: absolute;
       top: 20px;
       left: 20px;
-      right: 20px;
       z-index: 1;
-      text-align: center;
     }
     #start-button {
       padding: 12px 24px;
       font-size: 18px;
-      background: rgba(93, 64, 55, 0.9);
+      background: rgba(72, 118, 255, 0.8);
       color: white;
       border: none;
       border-radius: 30px;
       box-shadow: 0 4px 8px rgba(0,0,0,0.2);
       cursor: pointer;
       transition: all 0.3s ease;
-      margin: 0 auto;
-      display: inline-block;
     }
     #start-button:hover {
-      background: rgba(93, 64, 55, 1);
+      background: rgba(72, 118, 255, 1);
       transform: translateY(-2px);
       box-shadow: 0 6px 12px rgba(0,0,0,0.3);
     }
-    #title {
-      font-family: "Arial", sans-serif;
-      font-size: 24px;
-      font-weight: 700;
-      color: #5D4037;
-      margin-bottom: 15px;
-      text-shadow: 0 2px 4px rgba(255,255,255,0.5);
-    }
     #status {
-      margin: 15px auto 0;
+      margin-top: 15px;
       font-size: 16px;
-      background: rgba(0, 0, 0, 0.6);
+      background: rgba(0, 0, 0, 0.5);
       color: white;
       padding: 10px 15px;
       border-radius: 12px;
       display: none;
-      width: fit-content;
       backdrop-filter: blur(5px);
       box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-      max-width: 80%;
-    }
-    #hand-position {
-      position: absolute;
-      bottom: 20px;
-      left: 20px;
-      background: rgba(0, 0, 0, 0.6);
-      color: white;
-      padding: 10px;
-      border-radius: 10px;
-      font-size: 14px;
-      display: none;
     }
   </style>
 </head>
 <body>
   <div id="overlay">
-    <div id="title">Hover your hand over the cards</div>
     <button id="start-button">Start AR Experience</button>
     <div id="status"></div>
   </div>
-  <div id="hand-position"></div>
   
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
-    import { GLTFLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
-    import { FontLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/FontLoader.js';
     import { TextGeometry } from 'https://unpkg.com/three@0.150.1/examples/jsm/geometries/TextGeometry.js';
+    import { FontLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/FontLoader.js';
 
     let camera, scene, renderer;
-    let controller, handModel;
+    let controller, controller2;
+    let handModels = [];
     let clock = new THREE.Clock();
     let cards = [];
-    let handSphere; // Visual indicator for hand position
-    let handJoints = {};
-
+    let activeCard = null;
+    let handPosition = new THREE.Vector3();
+    let handSphereRadius = 0.05;
+    let font;
+    
     // Card data
     const cardData = [
-      { 
-        title: "Mountains", 
-        content: "Majestic peaks reaching for the sky.",
-        color: 0x8D6E63
+      {
+        title: "Canyons",
+        content: "Majestic formations carved by time and water",
+        color: 0xE57373, // Red
+        textureUrl: 'https://images.unsplash.com/photo-1479660656269-197ebb83b540?dpr=2&auto=compress,format&fit=crop&w=1199&h=798&q=80&cs=tinysrgb&crop='
       },
-      { 
-        title: "Beaches", 
-        content: "Golden sands and endless waves.",
-        color: 0x90CAF9 
+      {
+        title: "Beaches",
+        content: "Where the land meets the endless ocean",
+        color: 0x64B5F6, // Blue
+        textureUrl: 'https://images.unsplash.com/photo-1479659929431-4342107adfc1?dpr=2&auto=compress,format&fit=crop&w=1199&h=799&q=80&cs=tinysrgb&crop='
       },
-      { 
-        title: "Forests", 
-        content: "Ancient trees in deep green silence.",
-        color: 0x66BB6A
+      {
+        title: "Trees",
+        content: "Ancient sentinels watching over the earth",
+        color: 0x81C784, // Green
+        textureUrl: 'https://images.unsplash.com/photo-1479644025832-60dabb8be2a1?dpr=2&auto=compress,format&fit=crop&w=1199&h=799&q=80&cs=tinysrgb&crop='
       },
-      { 
-        title: "Cities", 
-        content: "Vibrant urban landscapes that never sleep.",
-        color: 0xFFB74D
+      {
+        title: "Lakes",
+        content: "Mirrors of the sky nestled in nature's embrace",
+        color: 0x7986CB, // Indigo
+        textureUrl: 'https://images.unsplash.com/photo-1479621051492-5a6f9bd9e51a?dpr=2&auto=compress,format&fit=crop&w=1199&h=811&q=80&cs=tinysrgb&crop='
       }
     ];
     
-    // Card animation parameters
-    const hoverEasing = createCubicBezier(0.23, 1, 0.32, 1);
-    const returnEasing = createCubicBezier(0.445, 0.05, 0.55, 0.95);
-    
-    // Animation tracking
-    let lastTime = 0;
-    let handPosition = new THREE.Vector3();
+    // Create textures for cards
+    const textureLoader = new THREE.TextureLoader();
+    const textures = cardData.map(data => {
+      // Using placeholder textures instead of remote URLs
+      return {
+        color: data.color,
+        texture: null
+      };
+    });
     
     init();
 
@@ -143,15 +123,19 @@
       document.body.appendChild(renderer.domElement);
 
       // Lighting
-      const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+      const ambientLight = new THREE.AmbientLight(0x404040, 2);
       scene.add(ambientLight);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
-      directionalLight.position.set(1, 2, 1);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+      directionalLight.position.set(1, 1, 1);
       directionalLight.castShadow = true;
-      directionalLight.shadow.mapSize.width = 1024;
-      directionalLight.shadow.mapSize.height = 1024;
       scene.add(directionalLight);
+
+      // Load font for text
+      const fontLoader = new FontLoader();
+      fontLoader.load('https://unpkg.com/three@0.150.1/examples/fonts/helvetiker_bold.typeface.json', function(loadedFont) {
+        font = loadedFont;
+      });
 
       // Start button event
       document.getElementById('start-button').addEventListener('click', () => {
@@ -159,13 +143,13 @@
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
               const sessionInit = { 
-                requiredFeatures: ['hand-tracking'],
+                requiredFeatures: ['hit-test', 'hand-tracking'],
                 optionalFeatures: ['dom-overlay'], 
                 domOverlay: { root: document.body } 
               };
               navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
             } else {
-              updateStatus('WebXR AR with hand tracking is not supported on this device.');
+              updateStatus('WebXR AR session is not supported on this device.');
             }
           });
         } else {
@@ -196,16 +180,14 @@
       
       // Hide button and show status
       document.getElementById('start-button').style.display = 'none';
-      document.getElementById('title').style.display = 'none';
-      updateStatus('Looking for your hands... Please show your hands in view.');
-      document.getElementById('hand-position').style.display = 'block';
+      updateStatus('Looking for surface...');
 
-      // Create the card menu
+      // Set up controller for hand tracking
+      setupHandTracking(session);
+      
+      // Create cards
       createCards();
       
-      // Set up hand tracking
-      setupHandTracking(session);
-
       // Start animation loop
       renderer.setAnimationLoop(render);
 
@@ -216,23 +198,57 @@
     function onSessionEnd() {
       updateStatus('AR session ended');
       document.getElementById('start-button').style.display = 'block';
-      document.getElementById('title').style.display = 'block';
-      document.getElementById('hand-position').style.display = 'none';
+    }
+
+    function setupHandTracking(session) {
+      // Create hand controllers
+      controller = renderer.xr.getController(0);
+      scene.add(controller);
+      
+      controller2 = renderer.xr.getController(1);
+      scene.add(controller2);
+      
+      // Create a small sphere to visualize the hand position
+      const handGeometry = new THREE.SphereGeometry(handSphereRadius, 16, 16);
+      const handMaterial = new THREE.MeshStandardMaterial({
+        color: 0xFF4500,
+        opacity: 0.7,
+        transparent: true
+      });
+      
+      const handSphere = new THREE.Mesh(handGeometry, handMaterial);
+      handSphere.visible = false;
+      scene.add(handSphere);
+      handModels.push(handSphere);
+      
+      updateStatus('Move your hand near cards to interact!');
     }
 
     function createCards() {
-      const cardWidth = 0.2;
-      const cardHeight = 0.3;
-      const cardSpacing = 0.05;
-      const totalWidth = cardData.length * (cardWidth + cardSpacing) - cardSpacing;
-      let startX = -totalWidth / 2 + cardWidth / 2;
-
-      cardData.forEach((data, index) => {
-        // Create card container
-        const cardGroup = new THREE.Group();
+      const cardWidth = 0.24;
+      const cardHeight = 0.32;
+      const cardDepth = 0.01;
+      const spacing = 0.3;
+      const startX = -((cardData.length - 1) * spacing) / 2;
+      
+      for (let i = 0; i < cardData.length; i++) {
+        const data = cardData[i];
         
-        // Create card body
-        const cardGeometry = new THREE.BoxGeometry(cardWidth, cardHeight, 0.01);
+        // Card container (parent)
+        const cardContainer = new THREE.Group();
+        cardContainer.position.set(startX + i * spacing, 0, -0.5);
+        cardContainer.userData = {
+          originalPosition: cardContainer.position.clone(),
+          originalRotation: cardContainer.rotation.clone(),
+          isHovered: false,
+          title: data.title,
+          content: data.content,
+          index: i
+        };
+        scene.add(cardContainer);
+        
+        // Main card body
+        const cardGeometry = new THREE.BoxGeometry(cardWidth, cardHeight, cardDepth);
         const cardMaterial = new THREE.MeshStandardMaterial({
           color: data.color,
           roughness: 0.3,
@@ -240,302 +256,362 @@
           transparent: true,
           opacity: 0.9
         });
-        
         const cardMesh = new THREE.Mesh(cardGeometry, cardMaterial);
-        cardMesh.castShadow = true;
-        cardMesh.receiveShadow = true;
-        cardGroup.add(cardMesh);
+        cardContainer.add(cardMesh);
         
-        // Create card border
-        const borderGeometry = new THREE.BoxGeometry(cardWidth + 0.01, cardHeight + 0.01, 0.005);
-        const borderMaterial = new THREE.MeshStandardMaterial({
-          color: 0xffffff,
+        // Card background (simulating background image)
+        const bgGeometry = new THREE.PlaneGeometry(cardWidth - 0.01, cardHeight - 0.01);
+        const bgMaterial = new THREE.MeshStandardMaterial({
+          color: 0xFFFFFF,
           roughness: 0.5,
-          metalness: 0.8,
+          map: null // We'll use color patterns instead of actual textures
         });
-        const borderMesh = new THREE.Mesh(borderGeometry, borderMaterial);
-        borderMesh.position.z = -0.008;
-        cardGroup.add(borderMesh);
         
-        // Add title
-        const titleMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
-        const titleGeometry = new THREE.PlaneGeometry(cardWidth - 0.02, 0.05);
-        const titleMesh = new THREE.Mesh(titleGeometry, titleMaterial);
-        titleMesh.position.set(0, cardHeight/2 - 0.05, 0.006);
+        // Create procedural texture pattern
+        const patternCanvas = document.createElement('canvas');
+        patternCanvas.width = 256;
+        patternCanvas.height = 256;
+        const context = patternCanvas.getContext('2d');
         
-        // Add title text
-        const titleCanvas = document.createElement('canvas');
-        titleCanvas.width = 256;
-        titleCanvas.height = 64;
-        const titleContext = titleCanvas.getContext('2d');
-        titleContext.fillStyle = '#000000';
-        titleContext.fillRect(0, 0, 256, 64);
-        titleContext.font = 'bold 36px Arial';
-        titleContext.textAlign = 'center';
-        titleContext.textBaseline = 'middle';
-        titleContext.fillStyle = '#ffffff';
-        titleContext.fillText(data.title, 128, 32);
-        
-        const titleTexture = new THREE.CanvasTexture(titleCanvas);
-        const titleTextMaterial = new THREE.MeshBasicMaterial({ 
-          map: titleTexture, 
-          transparent: true 
-        });
-        const titleTextMesh = new THREE.Mesh(titleGeometry, titleTextMaterial);
-        titleTextMesh.position.set(0, cardHeight/2 - 0.05, 0.007);
-        cardGroup.add(titleTextMesh);
-        
-        // Add content
-        const contentCanvas = document.createElement('canvas');
-        contentCanvas.width = 256;
-        contentCanvas.height = 128;
-        const contentContext = contentCanvas.getContext('2d');
-        contentContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        contentContext.fillRect(0, 0, 256, 128);
-        contentContext.font = '20px Arial';
-        contentContext.textAlign = 'center';
-        contentContext.textBaseline = 'middle';
-        contentContext.fillStyle = '#ffffff';
-        
-        // Handle text wrapping
-        const words = data.content.split(' ');
-        let line = '';
-        let y = 40;
-        const lineHeight = 24;
-        const maxWidth = 230;
-        
-        words.forEach(word => {
-          const testLine = line + word + ' ';
-          const metrics = contentContext.measureText(testLine);
-          const testWidth = metrics.width;
-          
-          if (testWidth > maxWidth) {
-            contentContext.fillText(line, 128, y);
-            line = word + ' ';
-            y += lineHeight;
-          } else {
-            line = testLine;
-          }
-        });
-        contentContext.fillText(line, 128, y);
-        
-        const contentTexture = new THREE.CanvasTexture(contentCanvas);
-        const contentMaterial = new THREE.MeshBasicMaterial({ 
-          map: contentTexture, 
-          transparent: true,
-          opacity: 0.9
-        });
-        const contentGeometry = new THREE.PlaneGeometry(cardWidth - 0.02, cardWidth/2);
-        const contentMesh = new THREE.Mesh(contentGeometry, contentMaterial);
-        contentMesh.position.set(0, -cardHeight/2 + cardWidth/4, 0.007);
-        cardGroup.add(contentMesh);
-        
-        // Position card
-        cardGroup.position.set(startX + index * (cardWidth + cardSpacing), 0, -0.5);
-        cardGroup.initialPosition = cardGroup.position.clone();
-        cardGroup.initialRotation = cardGroup.rotation.clone();
-        
-        // Add to scene and cards array
-        scene.add(cardGroup);
-        cards.push({
-          mesh: cardGroup,
-          width: cardWidth,
-          height: cardHeight,
-          isHovered: false,
-          hoverTime: 0,
-          returnTime: 0,
-          data: data
-        });
-      });
-      
-      updateStatus('Cards created! Move your hand near them to interact.');
-    }
-
-    function setupHandTracking(session) {
-      // Create a visual indicator for the hand position
-      const sphereGeometry = new THREE.SphereGeometry(0.02, 16, 16);
-      const sphereMaterial = new THREE.MeshStandardMaterial({
-        color: 0xff0000,
-        transparent: true,
-        opacity: 0.7,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.5
-      });
-      handSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-      scene.add(handSphere);
-      
-      // Setup for hand tracking
-      session.addEventListener('inputsourceschange', (event) => {
-        const inputSources = event.session.inputSources;
-        
-        for (let inputSource of inputSources) {
-          if (inputSource.hand) {
-            updateStatus('Hand detected! Move your hand to interact with cards.');
-          }
+        // Different pattern based on card index
+        if (i === 0) { // Canyons - wavy pattern
+          createWavyPattern(context, data.color);
+        } else if (i === 1) { // Beaches - dotted pattern
+          createDottedPattern(context, data.color);
+        } else if (i === 2) { // Trees - linear pattern
+          createLinearPattern(context, data.color);
+        } else { // Lakes - circular pattern
+          createCircularPattern(context, data.color);
         }
-      });
-    }
-
-    function checkCardInteractions(hand) {
-      if (!hand) return;
-      
-      // Track index finger tip position
-      const indexFingerTip = hand.joints['index-finger-tip'];
-      if (indexFingerTip) {
-        handSphere.position.copy(indexFingerTip.position);
-        handSphere.visible = true;
-        handPosition.copy(indexFingerTip.position);
         
-        document.getElementById('hand-position').textContent = 
-          `Hand: x:${handPosition.x.toFixed(2)} y:${handPosition.y.toFixed(2)} z:${handPosition.z.toFixed(2)}`;
+        const patternTexture = new THREE.CanvasTexture(patternCanvas);
+        bgMaterial.map = patternTexture;
         
-        // Check for hover interactions with cards
-        cards.forEach((card, i) => {
-          const cardPos = card.mesh.position;
-          const dx = Math.abs(handPosition.x - cardPos.x);
-          const dy = Math.abs(handPosition.y - cardPos.y);
-          const dz = Math.abs(handPosition.z - cardPos.z);
-          
-          // Check if hand is close to card
-          if (dx < card.width/1.5 && dy < card.height/1.5 && dz < 0.2) {
-            if (!card.isHovered) {
-              card.isHovered = true;
-              card.hoverTime = 0;
-              card.returnTime = 0;
-              
-              // Visual feedback
-              card.mesh.children[0].material.emissive = new THREE.Color(0xffffff);
-              card.mesh.children[0].material.emissiveIntensity = 0.3;
+        const bgMesh = new THREE.Mesh(bgGeometry, bgMaterial);
+        bgMesh.position.set(0, 0, cardDepth / 2 + 0.001);
+        cardContainer.add(bgMesh);
+        
+        // Create title and content text if font is loaded
+        if (font) {
+          addTextToCard(cardContainer, data.title, data.content);
+        } else {
+          // If font isn't loaded yet, wait for it
+          const fontCheckInterval = setInterval(() => {
+            if (font) {
+              addTextToCard(cardContainer, data.title, data.content);
+              clearInterval(fontCheckInterval);
             }
-            
-            // Calculate normalized position within card bounds
-            const normX = (handPosition.x - cardPos.x) / (card.width/2);
-            const normY = (handPosition.y - cardPos.y) / (card.height/2);
-            
-            // Update card tilt based on hand position
-            updateCardTilt(card, normX, normY);
-          } else if (card.isHovered) {
-            card.isHovered = false;
-            card.returnTime = 0;
-            
-            // Reset visual feedback
-            card.mesh.children[0].material.emissive = new THREE.Color(0x000000);
-            card.mesh.children[0].material.emissiveIntensity = 0;
-          }
-        });
-      } else {
-        handSphere.visible = false;
+          }, 100);
+        }
+        
+        cards.push(cardContainer);
+      }
+      
+      updateStatus('Cards created! Move your hand close to interact.');
+    }
+    
+    function createWavyPattern(ctx, baseColor) {
+      // Convert THREE.Color hex to CSS color
+      const color = '#' + new THREE.Color(baseColor).getHexString();
+      const lightColor = '#' + new THREE.Color(baseColor).multiplyScalar(1.3).getHexString();
+      
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 256, 256);
+      
+      ctx.fillStyle = lightColor;
+      for (let y = 0; y < 256; y += 20) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        
+        for (let x = 0; x < 256; x += 10) {
+          const height = 10 * Math.sin((x / 256) * Math.PI * 4);
+          ctx.lineTo(x, y + height);
+        }
+        
+        ctx.lineTo(256, y);
+        ctx.lineTo(256, y + 15);
+        ctx.lineTo(0, y + 15);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    
+    function createDottedPattern(ctx, baseColor) {
+      // Convert THREE.Color hex to CSS color
+      const color = '#' + new THREE.Color(baseColor).getHexString();
+      const lightColor = '#' + new THREE.Color(baseColor).multiplyScalar(1.3).getHexString();
+      
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 256, 256);
+      
+      ctx.fillStyle = lightColor;
+      for (let y = 10; y < 256; y += 20) {
+        for (let x = 10; x < 256; x += 20) {
+          ctx.beginPath();
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    
+    function createLinearPattern(ctx, baseColor) {
+      // Convert THREE.Color hex to CSS color
+      const color = '#' + new THREE.Color(baseColor).getHexString();
+      const lightColor = '#' + new THREE.Color(baseColor).multiplyScalar(1.3).getHexString();
+      
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 256, 256);
+      
+      ctx.fillStyle = lightColor;
+      for (let y = 10; y < 256; y += 30) {
+        ctx.fillRect(0, y, 256, 10);
+      }
+    }
+    
+    function createCircularPattern(ctx, baseColor) {
+      // Convert THREE.Color hex to CSS color
+      const color = '#' + new THREE.Color(baseColor).getHexString();
+      const lightColor = '#' + new THREE.Color(baseColor).multiplyScalar(1.3).getHexString();
+      
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 256, 256);
+      
+      ctx.fillStyle = lightColor;
+      for (let i = 0; i < 5; i++) {
+        const size = 256 - i * 40;
+        const offset = (256 - size) / 2;
+        
+        ctx.beginPath();
+        ctx.arc(128, 128, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Add inner circle with base color
+        if (i < 4) {
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(128, 128, (size - 20) / 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = lightColor;
+        }
       }
     }
 
-    function updateCardTilt(card, normX, normY) {
-      // Calculate rotation based on normalized position
-      const rotX = normY * -30 * Math.PI / 180; // Convert to radians
-      const rotY = normX * 30 * Math.PI / 180;
+    function addTextToCard(cardContainer, title, content) {
+      const cardWidth = 0.24;
+      const cardHeight = 0.32;
       
-      // Apply rotation with easing
-      card.mesh.rotation.x = rotX;
-      card.mesh.rotation.y = rotY;
+      // Title text
+      const titleGeometry = new TextGeometry(title, {
+        font: font,
+        size: 0.025,
+        height: 0.005
+      });
+      titleGeometry.computeBoundingBox();
+      const titleWidth = titleGeometry.boundingBox.max.x - titleGeometry.boundingBox.min.x;
       
-      // Apply subtle translation
-      const transX = normX * -0.02;
-      const transY = normY * -0.02;
-      card.mesh.position.x = card.mesh.initialPosition.x + transX;
-      card.mesh.position.y = card.mesh.initialPosition.y + transY;
+      const titleMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
+      const titleMesh = new THREE.Mesh(titleGeometry, titleMaterial);
+      titleMesh.position.set(-titleWidth / 2, -cardHeight / 2 + 0.06, cardContainer.children[0].position.z + 0.015);
+      cardContainer.add(titleMesh);
       
-      // Add subtle scale increase for hover effect
-      card.mesh.scale.set(1.05, 1.05, 1.05);
-    }
-
-    function updateCardsAnimation(deltaTime) {
-      cards.forEach(card => {
-        if (!card.isHovered) {
-          card.returnTime += deltaTime;
-          
-          // Ease back to original position and rotation
-          const progress = Math.min(card.returnTime / 0.6, 1.0);
-          const ease = returnEasing(progress);
-          
-          card.mesh.rotation.x = card.initialRotation.x * ease;
-          card.mesh.rotation.y = card.initialRotation.y * ease;
-          card.mesh.position.x = card.mesh.initialPosition.x;
-          card.mesh.position.y = card.mesh.initialPosition.y;
-          card.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), ease);
-        } else {
-          card.hoverTime += deltaTime;
-        }
+      // Content text - create multiline if needed
+      const contentLines = getContentLines(content, 18);
+      const contentMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
+      
+      let lineY = -cardHeight / 2 + 0.03;
+      contentLines.forEach(line => {
+        const contentGeometry = new TextGeometry(line, {
+          font: font,
+          size: 0.012,
+          height: 0.002
+        });
+        contentGeometry.computeBoundingBox();
+        const contentWidth = contentGeometry.boundingBox.max.x - contentGeometry.boundingBox.min.x;
+        
+        const contentMesh = new THREE.Mesh(contentGeometry, contentMaterial);
+        contentMesh.position.set(-contentWidth / 2, lineY, cardContainer.children[0].position.z + 0.015);
+        cardContainer.add(contentMesh);
+        
+        lineY -= 0.02; // Space between lines
       });
     }
+    
+    function getContentLines(text, maxChars) {
+      const words = text.split(' ');
+      const lines = [];
+      let currentLine = '';
+      
+      words.forEach(word => {
+        if ((currentLine + word).length <= maxChars) {
+          currentLine += (currentLine.length > 0 ? ' ' : '') + word;
+        } else {
+          lines.push(currentLine);
+          currentLine = word;
+        }
+      });
+      
+      if (currentLine.length > 0) {
+        lines.push(currentLine);
+      }
+      
+      return lines;
+    }
 
-    // Utility function to simulate cubic-bezier easing
-    function createCubicBezier(x1, y1, x2, y2) {
-      return function(t) {
-        if (t <= 0) return 0;
-        if (t >= 1) return 1;
+    function updateHandPosition(frame) {
+      if (!frame) return false;
+      
+      // Check if hand tracking is available
+      const hands = frame.getHands ? frame.getHands() : [];
+      if (hands.length === 0) return false;
+      
+      // Get the first hand joint position (index finger tip is a good choice)
+      const hand = hands[0];
+      const indexFingerTip = hand.joints['index-finger-tip'];
+      
+      if (indexFingerTip) {
+        const tipPosition = indexFingerTip.position;
         
-        // Simple approximation of cubic bezier
-        const p0 = 0;
-        const p1 = x1;
-        const p2 = x2;
-        const p3 = 1;
+        // Convert to world position
+        const xrRefSpace = renderer.xr.getReferenceSpace();
+        if (xrRefSpace) {
+          const pose = frame.getPose(indexFingerTip.space, xrRefSpace);
+          if (pose) {
+            // Update hand position
+            handPosition.set(
+              pose.transform.position.x,
+              pose.transform.position.y,
+              pose.transform.position.z
+            );
+            
+            // Update hand visualization
+            if (handModels.length > 0) {
+              handModels[0].position.copy(handPosition);
+              handModels[0].visible = true;
+            }
+            
+            return true;
+          }
+        }
+      }
+      
+      // If we can't get hand data, use controller position as fallback
+      const controllerWorldPos = new THREE.Vector3();
+      controller.getWorldPosition(controllerWorldPos);
+      handPosition.copy(controllerWorldPos);
+      
+      if (handModels.length > 0) {
+        handModels[0].position.copy(handPosition);
+        handModels[0].visible = true;
+      }
+      
+      return true;
+    }
+
+    function checkCardInteractions() {
+      // Reset all cards to non-hovered state first
+      let interactingWithAnyCard = false;
+      
+      cards.forEach(card => {
+        const distance = card.position.distanceTo(handPosition);
         
-        const t2 = t * t;
-        const t3 = t2 * t;
+        // Define interaction distance threshold
+        const interactionThreshold = 0.2;
         
-        return p0 * (1 - 3 * t + 3 * t2 - t3) +
-               3 * p1 * (t - 2 * t2 + t3) +
-               3 * p2 * (-t2 + t3) +
-               p3 * t3;
-      };
+        if (distance < interactionThreshold) {
+          // Hand is close to the card - activate hover effect
+          if (!card.userData.isHovered) {
+            // Start hover effect
+            card.userData.isHovered = true;
+            activeCard = card;
+            interactingWithAnyCard = true;
+          }
+        } else if (card.userData.isHovered) {
+          // Return card to original state
+          card.userData.isHovered = false;
+          if (activeCard === card) {
+            activeCard = null;
+          }
+        }
+      });
+      
+      return interactingWithAnyCard;
+    }
+
+    function animateCards() {
+      const time = clock.getElapsedTime();
+      
+      // Animate all cards (gentle floating)
+      cards.forEach((card, index) => {
+        // Base animation - gentle floating effect
+        card.position.y = card.userData.originalPosition.y + Math.sin(time * 0.5 + index * 0.2) * 0.01;
+        
+        if (card.userData.isHovered) {
+          // Enlarge card and move it forward when hovered
+          const targetScale = 1.2;
+          card.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+          
+          // Move card forward toward the user
+          const targetZ = card.userData.originalPosition.z + 0.2;
+          card.position.z = THREE.MathUtils.lerp(card.position.z, targetZ, 0.1);
+          
+          // Dynamic rotation based on hand position
+          const rotX = (handPosition.y - card.position.y) * 2;
+          const rotY = (handPosition.x - card.position.x) * 2;
+          
+          card.rotation.x = THREE.MathUtils.lerp(card.rotation.x, -rotX, 0.1);
+          card.rotation.y = THREE.MathUtils.lerp(card.rotation.y, rotY, 0.1);
+          
+          // Make card materials more vibrant
+          card.children.forEach(child => {
+            if (child.material) {
+              if (child.material.emissiveIntensity !== undefined) {
+                child.material.emissiveIntensity = THREE.MathUtils.lerp(child.material.emissiveIntensity || 0, 0.5, 0.1);
+              }
+              if (child.material.emissive !== undefined) {
+                child.material.emissive.setRGB(0.2, 0.2, 0.2);
+              }
+            }
+          });
+        } else {
+          // Return to normal size and position
+          card.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+          
+          // Return to original position
+          const targetPos = card.userData.originalPosition.clone();
+          targetPos.y += Math.sin(time * 0.5 + index * 0.2) * 0.01; // Keep the floating effect
+          
+          card.position.z = THREE.MathUtils.lerp(card.position.z, targetPos.z, 0.1);
+          
+          // Return to original rotation
+          card.rotation.x = THREE.MathUtils.lerp(card.rotation.x, card.userData.originalRotation.x, 0.1);
+          card.rotation.y = THREE.MathUtils.lerp(card.rotation.y, card.userData.originalRotation.y, 0.1);
+          
+          // Reset card materials
+          card.children.forEach(child => {
+            if (child.material) {
+              if (child.material.emissiveIntensity !== undefined) {
+                child.material.emissiveIntensity = THREE.MathUtils.lerp(child.material.emissiveIntensity || 0, 0, 0.1);
+              }
+              if (child.material.emissive !== undefined) {
+                child.material.emissive.setRGB(0, 0, 0);
+              }
+            }
+          });
+        }
+      });
     }
 
     function render(timestamp, frame) {
-      const deltaTime = (timestamp - lastTime) / 1000;
-      lastTime = timestamp;
+      // Update hand position if hand tracking is available
+      const handUpdated = updateHandPosition(frame);
       
-      if (frame) {
-        const referenceSpace = renderer.xr.getReferenceSpace();
-        const session = renderer.xr.getSession();
-        
-        // Update hand tracking
-        if (session) {
-          for (const inputSource of session.inputSources) {
-            if (inputSource.hand) {
-              const hand = {};
-              
-              // Get all the joints for the hand
-              for (const jointName of inputSource.hand.values()) {
-                const joint = inputSource.hand.get(jointName);
-                const jointPose = frame.getJointPose(joint, referenceSpace);
-                
-                if (jointPose) {
-                  hand.joints = hand.joints || {};
-                  hand.joints[jointName] = {
-                    position: new THREE.Vector3(
-                      jointPose.transform.position.x,
-                      jointPose.transform.position.y,
-                      jointPose.transform.position.z
-                    ),
-                    orientation: new THREE.Quaternion(
-                      jointPose.transform.orientation.x,
-                      jointPose.transform.orientation.y,
-                      jointPose.transform.orientation.z,
-                      jointPose.transform.orientation.w
-                    )
-                  };
-                }
-              }
-              
-              // Check interactions with cards
-              checkCardInteractions(hand);
-              break; // Only process the first hand
-            }
-          }
-        }
-        
-        // Update card animations
-        updateCardsAnimation(deltaTime);
+      if (handUpdated) {
+        // Check for card interactions
+        checkCardInteractions();
       }
+      
+      // Animate cards
+      animateCards();
       
       renderer.render(scene, camera);
     }
